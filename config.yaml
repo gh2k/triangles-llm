@@ -58,7 +58,7 @@ paths:
   data_dir: 'data'
   checkpoint_dir: 'checkpoints'
   output_dir: 'outputs'
-  lmdb_path: 'data/images.lmdb'
+  lmdb_path: 'data/unsplash-100.lmdb'
 
 # Inference settings
 inference:

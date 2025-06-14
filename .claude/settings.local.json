@@ -6,7 +6,11 @@
       "Bash(git add:*)",
       "Bash(mkdir:*)",
       "Bash(touch:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(python3:*)",
+      "Bash(rm:*)",
+      "Bash(triangulate_ai train:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

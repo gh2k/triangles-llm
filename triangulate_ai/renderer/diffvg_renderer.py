@@ -4,7 +4,7 @@ from typing import Tuple, Optional
 import warnings
 
 try:
-    import diffvg
+    import pydiffvg
     DIFFVG_AVAILABLE = True
 except ImportError:
     DIFFVG_AVAILABLE = False
@@ -31,12 +31,13 @@ class DiffVGRenderer:
         
         # Set DiffVG device
         if 'cuda' in device:
-            diffvg.set_use_gpu(True)
+            pydiffvg.set_use_gpu(True)
             if ':' in device:
                 gpu_id = int(device.split(':')[1])
-                diffvg.set_device(gpu_id)
+                torch.cuda.set_device(gpu_id)
+                pydiffvg.set_device(torch.device(device))
         else:
-            diffvg.set_use_gpu(False)
+            pydiffvg.set_use_gpu(False)
     
     def render_batch(self, coordinates: torch.Tensor, colors: torch.Tensor) -> torch.Tensor:
         """
@@ -86,54 +87,56 @@ class DiffVGRenderer:
             # Extract triangle vertices
             points = coords_scaled[i].reshape(3, 2)  # (3, 2) for 3 vertices
             
-            # Create path for triangle
-            path = diffvg.Path(
-                num_control_points=torch.zeros(3, dtype=torch.int32),  # No control points for straight lines
+            # Create polygon for triangle
+            polygon = pydiffvg.Polygon(
                 points=points,
-                is_closed=True,
-                stroke_width=torch.tensor(0.0)
+                is_closed=True
             )
-            shapes.append(path)
+            shapes.append(polygon)
             
             # Create shape group with color
             color_rgba = colors[i]  # (4,) tensor with RGBA
-            shape_group = diffvg.ShapeGroup(
+            shape_group = pydiffvg.ShapeGroup(
                 shape_ids=torch.tensor([i], dtype=torch.int32),
-                fill_color=color_rgba[:3],  # RGB only
-                fill_opacity=color_rgba[3:4],  # Alpha as opacity
-                use_even_odd_rule=False
+                fill_color=color_rgba  # RGBA together
             )
             shape_groups.append(shape_group)
         
-        # Create scene
-        scene = diffvg.Scene(
-            canvas_width=self.image_size,
-            canvas_height=self.image_size,
-            shapes=shapes,
-            shape_groups=shape_groups
-        )
-        
-        # Render with white background
-        background = torch.ones(3, device=self.device)
-        
-        # Render args
-        render_args = diffvg.RenderFunction.serialize_scene(
+        # Serialize scene
+        scene_args = pydiffvg.RenderFunction.serialize_scene(
             self.image_size, self.image_size, shapes, shape_groups
         )
         
-        # Render
-        rendered = diffvg.RenderFunction.apply(
+        # Render with white background
+        # Note: background_image should be None or shape (H, W, 4)
+        # We'll render with transparent background and composite white later
+        render = pydiffvg.RenderFunction.apply
+        rendered = render(
             self.image_size,    # width
             self.image_size,    # height
             2,                  # num_samples_x
             2,                  # num_samples_y
             0,                  # seed
-            background,         # background color
-            *render_args
+            None,               # background image (None = transparent)
+            *scene_args
         )
         
-        # Reshape to (H, W, 3) and permute to (3, H, W)
-        rendered = rendered.permute(2, 0, 1)
+        # The output is (H, W, 4) with RGBA channels
+        # We need to composite over white background and convert to RGB
+        if rendered.shape[2] == 4:
+            # Extract alpha channel
+            alpha = rendered[:, :, 3:4]
+            rgb = rendered[:, :, :3]
+            
+            # Composite over white background using alpha blending
+            white_bg = torch.ones_like(rgb)
+            rendered_rgb = rgb * alpha + white_bg * (1 - alpha)
+            
+            # Permute to (3, H, W)
+            rendered = rendered_rgb.permute(2, 0, 1)
+        else:
+            # Already RGB, just permute
+            rendered = rendered.permute(2, 0, 1)
         
         # Ensure output is in [0, 1] range
         rendered = torch.clamp(rendered, 0, 1)
