@@ -28,6 +28,7 @@ class DiffVGRenderer:
         
         self.image_size = image_size
         self.device = device
+        self.torch_device = torch.device(device)
         
         # Set DiffVG device
         if 'cuda' in device:
@@ -35,7 +36,7 @@ class DiffVGRenderer:
             if ':' in device:
                 gpu_id = int(device.split(':')[1])
                 torch.cuda.set_device(gpu_id)
-                pydiffvg.set_device(torch.device(device))
+                pydiffvg.set_device(self.torch_device)
         else:
             pydiffvg.set_use_gpu(False)
     
@@ -76,29 +77,85 @@ class DiffVGRenderer:
         """
         n_triangles = coordinates.size(0)
         
+        # Validate and clamp coordinates to prevent NaN/inf issues
+        if torch.isnan(coordinates).any():
+            nan_count = torch.isnan(coordinates).sum().item()
+            warnings.warn(f"NaN detected in {nan_count} coordinate values, replacing with zeros")
+            coordinates = torch.where(torch.isnan(coordinates), torch.zeros_like(coordinates), coordinates)
+        
+        if torch.isinf(coordinates).any():
+            inf_count = torch.isinf(coordinates).sum().item()
+            warnings.warn(f"Inf detected in {inf_count} coordinate values, clamping to [-1, 1]")
+            coordinates = torch.where(torch.isinf(coordinates), 
+                                    torch.sign(coordinates).clamp(-1, 1), coordinates)
+        
+        coordinates = torch.clamp(coordinates, -1.0, 1.0)
+        
+        # Validate and clamp colors
+        colors = torch.clamp(colors, 0.0, 1.0)
+        if torch.isnan(colors).any() or torch.isinf(colors).any():
+            warnings.warn("NaN or Inf detected in colors, replacing with defaults")
+            colors = torch.where(torch.isnan(colors) | torch.isinf(colors), 
+                               torch.ones_like(colors) * 0.5, colors)
+        
         # Convert coordinates from [-1, 1] to [0, image_size]
         coords_scaled = (coordinates + 1.0) * 0.5 * self.image_size
+        
+        # Debug: check for issues in coords_scaled
+        if torch.isnan(coords_scaled).any() or torch.isinf(coords_scaled).any():
+            warnings.warn(f"NaN/Inf detected in coords_scaled after conversion")
         
         # Create shapes list for DiffVG
         shapes = []
         shape_groups = []
         
+        valid_shape_count = 0
         for i in range(n_triangles):
-            # Extract triangle vertices
-            points = coords_scaled[i].reshape(3, 2)  # (3, 2) for 3 vertices
+            # Extract triangle vertices and ensure contiguous
+            points = coords_scaled[i].reshape(3, 2).contiguous()  # (3, 2) for 3 vertices
             
-            # Create polygon for triangle
+            # Check for NaN/Inf in points
+            if torch.isnan(points).any() or torch.isinf(points).any():
+                continue
+            
+            # Check if triangle is valid (non-degenerate)
+            p1, p2, p3 = points[0], points[1], points[2]
+            area = 0.5 * torch.abs((p2[0] - p1[0]) * (p3[1] - p1[1]) - 
+                                   (p3[0] - p1[0]) * (p2[1] - p1[1]))
+            
+            # Skip degenerate triangles
+            if area < 1e-6 or torch.isnan(area) or torch.isinf(area):
+                continue
+            
+            # Create polygon for triangle (pydiffvg expects CPU float32 tensors)
             polygon = pydiffvg.Polygon(
-                points=points,
+                points=points.cpu().float(),
                 is_closed=True
             )
             shapes.append(polygon)
             
-            # Create shape group with color
+            # Create shape group with color (pydiffvg expects CPU float32 tensors)
             color_rgba = colors[i]  # (4,) tensor with RGBA
             shape_group = pydiffvg.ShapeGroup(
-                shape_ids=torch.tensor([i], dtype=torch.int32),
-                fill_color=color_rgba  # RGBA together
+                shape_ids=torch.tensor([valid_shape_count], dtype=torch.int32),  # CPU tensor
+                fill_color=color_rgba.cpu().float().contiguous()  # RGBA on CPU as float32
+            )
+            shape_groups.append(shape_group)
+            valid_shape_count += 1
+        
+        # If no valid shapes, create a small default triangle to avoid empty scene
+        if valid_shape_count == 0:
+            warnings.warn(f"No valid triangles found out of {n_triangles}. Creating default triangle.")
+            default_points = torch.tensor([[10.0, 10.0], [100.0, 10.0], [55.0, 100.0]], 
+                                        dtype=torch.float32)  # CPU tensor, in pixel coordinates
+            polygon = pydiffvg.Polygon(points=default_points, is_closed=True)
+            shapes.append(polygon)
+            
+            default_color = torch.tensor([0.5, 0.5, 0.5, 0.5], 
+                                       dtype=torch.float32)  # CPU tensor
+            shape_group = pydiffvg.ShapeGroup(
+                shape_ids=torch.tensor([0], dtype=torch.int32),  # CPU tensor
+                fill_color=default_color
             )
             shape_groups.append(shape_group)
         
@@ -140,6 +197,9 @@ class DiffVGRenderer:
         
         # Ensure output is in [0, 1] range
         rendered = torch.clamp(rendered, 0, 1)
+        
+        # Move to the correct device
+        rendered = rendered.to(self.torch_device)
         
         return rendered
     
@@ -196,6 +256,7 @@ class MockRenderer:
     def __init__(self, image_size: int, device: str = 'cuda'):
         self.image_size = image_size
         self.device = device
+        self.torch_device = torch.device(device)
         warnings.warn("Using MockRenderer because DiffVG is not available. "
                      "Rendered images will be random noise.")
     
@@ -203,12 +264,12 @@ class MockRenderer:
         """Generate random images as placeholder."""
         batch_size = coordinates.size(0)
         return torch.rand(batch_size, 3, self.image_size, self.image_size, 
-                         device=self.device, requires_grad=True)
+                         device=self.torch_device, requires_grad=True)
     
     def render_single(self, coordinates: torch.Tensor, colors: torch.Tensor) -> torch.Tensor:
         """Generate random image as placeholder."""
         return torch.rand(3, self.image_size, self.image_size, 
-                         device=self.device, requires_grad=True)
+                         device=self.torch_device, requires_grad=True)
     
     def triangles_to_svg(self, coordinates: torch.Tensor, colors: torch.Tensor) -> str:
         """Convert triangles to SVG string."""

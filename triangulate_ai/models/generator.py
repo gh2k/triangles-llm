@@ -109,6 +109,16 @@ class TriangleGenerator(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+        
+        # Special initialization for the final layer to encourage better initial triangles
+        # Initialize the bias of the last layer to spread triangles across the image
+        if hasattr(self.decoder[-1], 'bias') and self.decoder[-1].bias is not None:
+            with torch.no_grad():
+                bias = self.decoder[-1].bias.view(self.triangles_n, 10)
+                # Initialize coordinates to cover more of the image space
+                bias[:, :6].uniform_(-0.5, 0.5)  # Coordinates
+                # Initialize colors to mid-range values
+                bias[:, 6:].zero_()  # Colors (will become 0.5 after sigmoid)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

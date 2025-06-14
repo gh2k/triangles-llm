@@ -10,7 +10,9 @@
       "Bash(python3:*)",
       "Bash(rm:*)",
       "Bash(triangulate_ai train:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(python:*)"
     ],
     "deny": []
   }

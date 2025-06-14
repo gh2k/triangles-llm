@@ -75,6 +75,10 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
     for batch_idx, batch in enumerate(pbar):
         images = batch['image'].to(cfg.training.device)
         
+        # Resize images to match renderer size if needed
+        if images.shape[2] != cfg.image_size or images.shape[3] != cfg.image_size:
+            images = F.interpolate(images, size=(cfg.image_size, cfg.image_size), mode='bilinear', align_corners=False)
+        
         # Zero gradients
         optimizer.zero_grad()
         
@@ -94,6 +98,20 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
         
         # Backward pass
         scaler.scale(losses['total']).backward()
+        
+        # Check for NaN gradients before clipping
+        has_nan_grad = False
+        for name, param in model.named_parameters():
+            if param.grad is not None and torch.isnan(param.grad).any():
+                has_nan_grad = True
+                print(f"WARNING: NaN gradient detected in {name}")
+                break
+        
+        if has_nan_grad:
+            print("Skipping optimizer step due to NaN gradients")
+            optimizer.zero_grad()
+            scaler.update()
+            continue
         
         # Gradient clipping
         if cfg.training.gradient_clip > 0:
@@ -160,6 +178,10 @@ def validate(model: nn.Module, renderer, loss_fn: nn.Module,
     with torch.no_grad():
         for batch in tqdm(val_loader, desc='Validation'):
             images = batch['image'].to(cfg.training.device)
+            
+            # Resize images to match renderer size if needed
+            if images.shape[2] != cfg.image_size or images.shape[3] != cfg.image_size:
+                images = F.interpolate(images, size=(cfg.image_size, cfg.image_size), mode='bilinear', align_corners=False)
             
             # Generate and render
             triangle_params = model(images)
