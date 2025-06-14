@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from typing import List, Optional
 
 
@@ -117,34 +116,9 @@ class TriangleGenerator(nn.Module):
             with torch.no_grad():
                 bias = self.decoder[-1].bias.view(self.triangles_n, 10)
                 # Initialize coordinates to cover more of the image space
-                # Create a grid of triangles across the image
-                grid_size = int(np.sqrt(self.triangles_n))
-                for i in range(self.triangles_n):
-                    row = i // grid_size
-                    col = i % grid_size
-                    # Center position for this triangle
-                    cx = (col + 0.5) / grid_size * 2 - 1  # Map to [-1, 1]
-                    cy = (row + 0.5) / grid_size * 2 - 1
-                    # Add some randomness
-                    cx += np.random.uniform(-0.1, 0.1)
-                    cy += np.random.uniform(-0.1, 0.1)
-                    # Create small triangle around center
-                    size = 0.3 / grid_size
-                    bias[i, 0] = cx - size  # x1
-                    bias[i, 1] = cy - size  # y1
-                    bias[i, 2] = cx + size  # x2
-                    bias[i, 3] = cy - size  # y2
-                    bias[i, 4] = cx        # x3
-                    bias[i, 5] = cy + size  # y3
-                
-                # Initialize colors with variety
-                bias[:, 6:9].uniform_(-0.5, 0.5)  # RGB with variation
-                bias[:, 9].fill_(0.5)  # Alpha starts at moderate opacity
-        
-        # Also improve weight initialization for the last linear layer
-        if hasattr(self.decoder[-1], 'weight'):
-            # Smaller initialization for more stable gradients
-            nn.init.normal_(self.decoder[-1].weight, 0, 0.001)
+                bias[:, :6].uniform_(-0.5, 0.5)  # Coordinates
+                # Initialize colors to mid-range values
+                bias[:, 6:].zero_()  # Colors (will become 0.5 after sigmoid)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

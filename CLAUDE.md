@@ -101,6 +101,22 @@ All hyperparameters are managed through YAML config with CLI overrides:
 
 - **Mixed Precision Training**: DiffVG requires float32 for numerical stability. Mixed precision (float16) is disabled by default as it causes assertion errors in the backward pass.
 
+## Loss Functions
+
+The system supports two loss function modes:
+
+### 1. Weighted Sum (Default)
+- Traditional approach: `L = α·perceptual + β·L1 + γ·LPIPS`
+- Requires manual weight tuning
+- Config: Standard loss weights (alpha, beta, gamma)
+
+### 2. Geometric Mean Loss
+- Automatic balancing: `L = log(perceptual) + log(L1) + log(LPIPS)`
+- No manual weights needed - all losses must improve together
+- Includes L1 regularization to prevent vanishing gradients
+- Config: Set `loss.type: 'geometric_mean'` in config file
+- See `docs/loss-balancing-findings.md` for detailed analysis
+
 ## Dependencies
 
 - Python ≥3.10

@@ -22,9 +22,17 @@ from .utils import save_image, create_comparison_grid, MetricsCalculator
 def get_warmup_lr_scheduler(optimizer, warmup_steps: int, total_steps: int):
     """Create a learning rate scheduler with linear warmup and cosine decay."""
     def lr_lambda(step):
-        if step < warmup_steps:
+        if warmup_steps <= 0:
+            # No warmup
+            if total_steps <= 1:
+                return 1.0  # Constant LR for very small datasets
+            progress = step / total_steps
+            return 0.5 * (1 + np.cos(np.pi * progress))
+        elif step < warmup_steps:
             return step / warmup_steps
         else:
+            if total_steps <= warmup_steps:
+                return 1.0  # Constant LR if total steps <= warmup steps
             progress = (step - warmup_steps) / (total_steps - warmup_steps)
             return 0.5 * (1 + np.cos(np.pi * progress))
     
@@ -67,7 +75,12 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
     """Train for one epoch."""
     model.train()
     
-    epoch_losses = {'total': [], 'perceptual': [], 'l1': [], 'lpips': []}
+    # Initialize epoch losses - include both standard and geometric mean metrics
+    epoch_losses = {
+        'total': [], 'perceptual': [], 'l1': [], 'lpips': [],
+        'geometric_mean': [], 'regularization': [],
+        'log_perceptual': [], 'log_l1': [], 'log_lpips': []
+    }
     epoch_metrics = {'lpips': [], 'ssim': [], 'psnr': []}
     
     pbar = tqdm(train_loader, desc=f'Epoch {epoch}')
@@ -132,9 +145,10 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
         # Scheduler step
         scheduler.step()
         
-        # Record losses
+        # Record losses (only if key exists in epoch_losses)
         for k, v in losses.items():
-            epoch_losses[k].append(v.item())
+            if k in epoch_losses:
+                epoch_losses[k].append(v.item())
         
         # Update progress bar
         pbar.set_postfix({
@@ -156,6 +170,16 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
                 'train/step': global_step
             }
             
+            # Add geometric mean specific metrics if available
+            if 'geometric_mean' in losses:
+                log_dict['train/geometric_mean'] = losses['geometric_mean'].item()
+            if 'regularization' in losses:
+                log_dict['train/regularization'] = losses['regularization'].item()
+            if 'log_perceptual' in losses:
+                log_dict['train/log_perceptual'] = losses['log_perceptual'].item()
+                log_dict['train/log_l1'] = losses['log_l1'].item()
+                log_dict['train/log_lpips'] = losses['log_lpips'].item()
+            
             # Calculate metrics periodically
             if batch_idx % (cfg.logging.log_interval * 5) == 0:
                 with torch.no_grad():
@@ -166,8 +190,8 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
             
             wandb.log(log_dict, step=global_step)
     
-    # Return epoch averages
-    avg_losses = {k: np.mean(v) for k, v in epoch_losses.items()}
+    # Return epoch averages (handle empty lists)
+    avg_losses = {k: np.mean(v) if v else 0 for k, v in epoch_losses.items()}
     avg_metrics = {k: np.mean(v) if v else 0 for k, v in epoch_metrics.items()}
     
     return {**avg_losses, **avg_metrics}
@@ -179,7 +203,12 @@ def validate(model: nn.Module, renderer, loss_fn: nn.Module,
     """Run validation."""
     model.eval()
     
-    val_losses = {'total': [], 'perceptual': [], 'l1': [], 'lpips': []}
+    # Initialize validation losses - include both standard and geometric mean metrics
+    val_losses = {
+        'total': [], 'perceptual': [], 'l1': [], 'lpips': [],
+        'geometric_mean': [], 'regularization': [],
+        'log_perceptual': [], 'log_l1': [], 'log_lpips': []
+    }
     val_metrics = {'lpips': [], 'ssim': [], 'psnr': []}
     
     with torch.no_grad():
@@ -198,16 +227,17 @@ def validate(model: nn.Module, renderer, loss_fn: nn.Module,
             # Compute losses
             losses = loss_fn(rendered, images)
             for k, v in losses.items():
-                val_losses[k].append(v.item())
+                if k in val_losses:
+                    val_losses[k].append(v.item())
             
             # Compute metrics
             metrics = metrics_calc.calculate_metrics(rendered, images)
             for k, v in metrics.items():
                 val_metrics[k].append(v)
     
-    # Return averages
-    avg_losses = {k: np.mean(v) for k, v in val_losses.items()}
-    avg_metrics = {k: np.mean(v) for k, v in val_metrics.items()}
+    # Return averages (handle empty lists)
+    avg_losses = {k: np.mean(v) if v else 0 for k, v in val_losses.items()}
+    avg_metrics = {k: np.mean(v) if v else 0 for k, v in val_metrics.items()}
     
     return {**avg_losses, **avg_metrics}
 
@@ -239,13 +269,25 @@ def train(cfg: DictConfig) -> None:
     renderer = create_renderer(cfg.image_size, cfg.training.device)
     
     # Create loss function
-    loss_fn = CombinedLoss(
-        alpha=cfg.loss.alpha,
-        beta=cfg.loss.beta,
-        gamma=cfg.loss.gamma,
-        vgg_layers=cfg.loss.vgg_layers,
-        device=cfg.training.device
-    )
+    # Create loss function based on config
+    if hasattr(cfg.loss, 'type') and cfg.loss.type == 'geometric_mean':
+        from .loss import GeometricMeanLoss
+        loss_fn = GeometricMeanLoss(
+            vgg_layers=cfg.loss.vgg_layers,
+            device=cfg.training.device,
+            epsilon=cfg.loss.epsilon,
+            min_loss_value=cfg.loss.min_loss_value,
+            regularization_weight=cfg.loss.regularization_weight
+        )
+    else:
+        # Default to CombinedLoss for backward compatibility
+        loss_fn = CombinedLoss(
+            alpha=cfg.loss.alpha,
+            beta=cfg.loss.beta,
+            gamma=cfg.loss.gamma,
+            vgg_layers=cfg.loss.vgg_layers,
+            device=cfg.training.device
+        )
     
     # Create metrics calculator
     metrics_calc = MetricsCalculator(device=cfg.training.device)

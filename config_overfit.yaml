@@ -1,0 +1,71 @@
+# TriangulateAI Configuration - Single Image Overfitting Test
+
+# Image settings
+image_size: 256
+triangles_n: 50  # Start with fewer triangles for debugging
+
+# Model architecture
+model:
+  encoder_depth: 5
+  channels_base: 64
+  channels_progression: [64, 128, 256, 512, 512]
+  hidden_dim: 512
+  fc_hidden_dim: 1024
+
+# Loss weights - Try even more aggressive L1
+loss:
+  alpha: 0.01    # Very low perceptual loss
+  beta: 10.0     # Very high L1 loss to force pixel matching
+  gamma: 0.01    # Low LPIPS
+  vgg_layers: ['conv1_2', 'conv2_2', 'conv3_4', 'conv4_4']
+
+# Optimizer settings
+optimizer:
+  type: 'AdamW'
+  lr: 1e-3       # Higher learning rate for overfitting
+  betas: [0.9, 0.999]
+  weight_decay: 0  # No weight decay for overfitting
+
+# Training settings
+training:
+  batch_size: 1    # Must be 1 for single image dataset
+  epochs: 200      # Many epochs to overfit
+  save_interval: 20
+  warmup_ratio: 0.0  # No warmup to avoid division by zero
+  mixed_precision: false
+  gradient_clip: 1.0
+  device: 'cuda:0'
+
+# Data settings - NO AUGMENTATION for overfitting
+data:
+  train_split: 0.8   # With 10 images, this gives 8 train, 2 val
+  val_split: 0.2
+  augmentation:
+    random_flip: false  # No augmentation
+    hsv_jitter: 0.0     # No color jitter
+  num_workers: 0  # Single threaded for debugging
+  pin_memory: false
+
+# Logging settings
+logging:
+  wandb_project: 'triangulate_ai'
+  wandb_entity: null
+  log_interval: 1    # Log every iteration for debugging
+  sample_interval: 1  # Save every epoch
+
+# Paths
+paths:
+  data_dir: 'data'
+  checkpoint_dir: 'checkpoints_overfit'
+  output_dir: 'outputs_overfit'
+  lmdb_path: 'data/overfit.lmdb'
+
+# Inference settings
+inference:
+  batch_size: 1
+  device: 'cuda:0'
+
+# Evaluation settings
+evaluation:
+  metrics: ['lpips', 'ssim', 'psnr']
+  batch_size: 1
