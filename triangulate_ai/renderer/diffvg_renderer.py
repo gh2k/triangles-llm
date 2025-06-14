@@ -12,7 +12,12 @@ except ImportError:
 
 
 class DiffVGRenderer:
-    """Differentiable renderer for triangles using DiffVG."""
+    """Differentiable renderer for triangles using DiffVG.
+    
+    Note: DiffVG requires float32 tensors for numerical stability in gradients.
+    Mixed precision training (float16) is not supported and will cause assertion errors
+    in the backward pass.
+    """
     
     def __init__(self, image_size: int, device: str = 'cuda'):
         """

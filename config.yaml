@@ -32,7 +32,7 @@ training:
   epochs: 50
   save_interval: 5
   warmup_ratio: 0.01  # 1% of total steps
-  mixed_precision: true
+  mixed_precision: false  # DiffVG requires float32 for stable gradients
   gradient_clip: 1.0
   device: 'cuda:0'
 

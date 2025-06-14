@@ -97,6 +97,10 @@ All hyperparameters are managed through YAML config with CLI overrides:
 - Inference: <1 second for 512×512 image with 100 triangles
 - Quality: LPIPS ≤0.18 and SSIM ≥0.72 on validation set
 
+## Known Limitations
+
+- **Mixed Precision Training**: DiffVG requires float32 for numerical stability. Mixed precision (float16) is disabled by default as it causes assertion errors in the backward pass.
+
 ## Dependencies
 
 - Python ≥3.10

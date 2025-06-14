@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 import wandb
@@ -51,7 +51,7 @@ def save_checkpoint(model: nn.Module, optimizer: torch.optim.Optimizer,
 def load_checkpoint(checkpoint_path: str, model: nn.Module, 
                    optimizer: Optional[torch.optim.Optimizer] = None) -> Dict:
     """Load training checkpoint."""
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     
     if optimizer is not None:
@@ -83,17 +83,24 @@ def train_epoch(model: nn.Module, renderer, loss_fn: nn.Module,
         optimizer.zero_grad()
         
         # Mixed precision training
-        with autocast(enabled=cfg.training.mixed_precision):
+        with autocast(device_type='cuda', enabled=cfg.training.mixed_precision):
             # Generate triangle parameters
             triangle_params = model(images)
             
             # Split into coordinates and colors
             coordinates, colors = model.get_triangle_params(triangle_params)
             
-            # Render triangles
-            rendered = renderer.render_batch(coordinates, colors)
+            # DiffVG requires float32 for stable gradients
+            # Exit autocast context for rendering
+            with autocast(device_type='cuda', enabled=False):
+                # Ensure coordinates and colors are float32
+                coordinates = coordinates.float()
+                colors = colors.float()
+                
+                # Render triangles
+                rendered = renderer.render_batch(coordinates, colors)
             
-            # Compute loss
+            # Compute loss (back in autocast context)
             losses = loss_fn(rendered, images)
         
         # Backward pass
@@ -268,7 +275,7 @@ def train(cfg: DictConfig) -> None:
     scheduler = get_warmup_lr_scheduler(optimizer, warmup_steps, total_steps)
     
     # Mixed precision scaler
-    scaler = GradScaler(enabled=cfg.training.mixed_precision)
+    scaler = GradScaler('cuda', enabled=cfg.training.mixed_precision)
     
     # Training loop
     best_val_loss = float('inf')

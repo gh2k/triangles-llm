@@ -12,7 +12,9 @@
       "Bash(triangulate_ai train:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(source:*)",
+      "Bash(timeout 30 python:*)"
     ],
     "deny": []
   }
